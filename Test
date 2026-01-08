@@ -1,0 +1,106 @@
+# test_rezervasyon.py
+import io
+import sys
+import unittest
+from unittest.mock import patch
+import importlib
+
+TARGET_MODULE = "rezervasyon"  # kendi dosya adına göre değiştir (ör: "main" vs)
+
+
+def run_module_with_inputs(module_name: str, inputs: list[str]) -> str:
+    """
+    Modül import edilince while True döngüsü çalıştığı için input()'ları mock'layıp
+    programı gerçek kullanıcı gibi menüden gezdirir. Çıktıyı string olarak döndürür.
+    """
+    # Modül daha önce import edildiyse temizle ki her run sıfırdan başlasın
+    if module_name in sys.modules:
+        del sys.modules[module_name]
+
+    fake_out = io.StringIO()
+
+    # input() sırası biterse StopIteration olur, onu daha anlaşılır hata yapalım
+    def _input_side_effect(_prompt=""):
+        if not inputs:
+            raise AssertionError(
+                "Test input listesi bitti ama program hala input istiyor. "
+                "Menüden çıkış için en sona '0' eklediğine emin ol."
+            )
+        return inputs.pop(0)
+
+    with patch("builtins.input", side_effect=_input_side_effect), patch("sys.stdout", new=fake_out):
+        importlib.import_module(module_name)
+
+    return fake_out.getvalue()
+
+
+class TestRezervasyonProgram(unittest.TestCase):
+    def test_happy_path_create_list_cancel(self):
+        # 1) seanslar
+        # 2) rezervasyon yap (S1, koltuk 1)
+        # 3) rezervasyonlarım
+        # 4) iptal (ID 1)
+        # 3) tekrar listele (boş olmalı)
+        # 0) çıkış
+        inputs = [
+            "1",
+            "2", "S1", "1",
+            "3",
+            "4", "1",
+            "3",
+            "0"
+        ]
+        out = run_module_with_inputs(TARGET_MODULE, inputs)
+
+        self.assertIn("Seanslar:", out)
+        self.assertIn("Batman", out)
+        self.assertIn("Rezervasyon ok. ID:", out)
+        self.assertIn("Rezervasyonlar:", out)
+        self.assertIn("İptal edildi.", out)
+        self.assertIn("Hiç rezervasyon yok.", out)
+        self.assertIn("Görüşürüz.", out)
+
+    def test_try_reserved_seat_again(self):
+        # Aynı koltuğu 2 kere almaya çalış: ikinci sefer "Bu koltuk dolu."
+        inputs = [
+            "2", "S1", "2",     # koltuk 2 rezerve
+            "2", "S1", "2",     # tekrar dene
+            "0"
+        ]
+        out = run_module_with_inputs(TARGET_MODULE, inputs)
+        self.assertIn("Rezervasyon ok. ID:", out)
+        self.assertIn("Bu koltuk dolu.", out)
+
+    def test_invalid_session(self):
+        inputs = [
+            "2", "S9",          # yanlış seans
+            "0"
+        ]
+        out = run_module_with_inputs(TARGET_MODULE, inputs)
+        self.assertIn("Yanlış seans.", out)
+
+    def test_invalid_seat_inputs(self):
+        # sayı değil + aralık dışı
+        inputs = [
+            "2", "S1", "abc",   # sayı gir.
+            "2", "S1", "99",    # aralık dışı
+            "0"
+        ]
+        out = run_module_with_inputs(TARGET_MODULE, inputs)
+        self.assertIn("Sayı gir.", out)
+        self.assertIn("Aralık dışı.", out)
+
+    def test_cancel_nonexistent_id(self):
+        # önce 1 rezervasyon yap, sonra olmayan ID iptal dene
+        inputs = [
+            "2", "S2", "5",     # ID 1 oluşur
+            "4", "999",         # yok
+            "0"
+        ]
+        out = run_module_with_inputs(TARGET_MODULE, inputs)
+        self.assertIn("Rezervasyon ok. ID:", out)
+        self.assertIn("ID bulunamadı.", out)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
